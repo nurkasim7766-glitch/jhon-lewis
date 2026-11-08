@@ -39,7 +39,7 @@ def mux(video_only: Path, audio_source: Path, out_path: Path, crf: int = 18, pre
         cmd += ["-map", "0:v:0", "-an"]
     cmd += ["-c:v", "libx264", "-preset", preset, "-crf", str(crf), "-pix_fmt", "yuv420p", "-movflags", "+faststart",
             str(out_path)]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if proc.returncode != 0:
         raise RenderError(f"ffmpeg mux failed: {proc.stderr.strip()}")
 

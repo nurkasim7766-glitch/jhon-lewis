@@ -33,7 +33,7 @@ def ffprobe_exe() -> str | None:
 
 
 def run_ffmpeg(args: list[str], check: bool = True) -> subprocess.CompletedProcess:
-    proc = subprocess.run([ffmpeg_exe(), "-hide_banner", *args], capture_output=True, text=True)
+    proc = subprocess.run([ffmpeg_exe(), "-hide_banner", *args], capture_output=True, text=True, encoding="utf-8", errors="replace")
     if check and proc.returncode != 0:
         raise RuntimeError(f"ffmpeg failed: {proc.stderr.strip()[-1500:]}")
     return proc
@@ -50,7 +50,7 @@ def probe_media(path: str | Path) -> dict:
     if probe:
         proc = subprocess.run([probe, "-v", "error", "-show_entries",
                                "stream=codec_type,codec_name,width,height,nb_frames,r_frame_rate:format=duration",
-                               "-of", "json", str(path)], capture_output=True, text=True)
+                               "-of", "json", str(path)], capture_output=True, text=True, encoding="utf-8", errors="replace")
         if proc.returncode == 0:
             doc = json.loads(proc.stdout or "{}")
             for s in doc.get("streams", []):

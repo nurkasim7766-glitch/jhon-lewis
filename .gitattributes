@@ -1,0 +1,3 @@
+* text=auto
+start.bat text eol=crlf
+start.sh text eol=lf
