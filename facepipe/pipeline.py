@@ -90,7 +90,7 @@ def cut_clip(video: Path, start_ms: float, end_ms: float, out: Path, fps_hint: f
     cmd = [ffmpeg_exe(), "-y", "-loglevel", "error", "-ss", f"{start_ms / 1000:.3f}", "-to", f"{end_ms / 1000:.3f}",
            "-i", str(video), "-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-pix_fmt", "yuv420p",
            "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(out)]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if proc.returncode != 0:
         raise RuntimeError(f"ffmpeg cut failed: {proc.stderr.strip()}")
 

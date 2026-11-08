@@ -1,4 +1,4 @@
-# facepipe — AI video clipping
+# Yoyo Clip (facepipe) — AI video clipping
 
 Turn a long talking-head video (podcast, interview, panel) plus its transcript into
 short vertical clips that follow whoever is speaking — through a browser, or from the
@@ -58,25 +58,41 @@ Models (downloaded automatically into `./models/` on first use):
 
 ## 2. Windows setup
 
-1. Install **Python 3.12** from <https://www.python.org/downloads/windows/>.
-   In the installer tick **“Add python.exe to PATH”**.
-2. Download or `git clone` this repository to a folder, e.g. `C:\facepipe`.
+1. Install **Python 3.12 (64-bit)** from <https://www.python.org/downloads/windows/>.
+   In the installer tick **“Add python.exe to PATH”** (the `py` launcher is installed too).
+   Do **not** rely on the Microsoft Store “python” shortcut.
+2. Download or `git clone` this repository to a **short path**, e.g. `C:\yoyoclip`
+   (deeply nested folders can hit Windows' 260-character path limit during install).
 3. Double-click **`start.bat`**.
 
-The first run creates a virtual environment in `.venv\`, installs the dependencies
-(a few minutes) and then opens <http://127.0.0.1:8765/> in your browser. Later runs
-start in a couple of seconds. Close the console window to stop the server.
+What `start.bat` does, in order:
+
+| step | what happens | where it can fail |
+|---|---|---|
+| Python detection | tries `py -3`, then `python`; requires ≥ 3.10 | prints install instructions and pauses |
+| First run only | `python -m venv .venv`, `pip install --upgrade pip`, `pip install -e ".[dev]"` (≈ 3–8 min, ~1.2 GB; needs internet) | pauses with the pip error; run again to retry |
+| Every run | checks `import facepipe.web.app`, re-installs if a dependency is missing | — |
+| Start | `python -m facepipe.web --port 8765`; the server opens `http://127.0.0.1:8765/` in your default browser after ~1 s | “address already in use” → set another port |
+
+ffmpeg is **bundled** (`imageio-ffmpeg`, BSD-2) so nothing else needs installing. Windows
+builds don't include `ffprobe`; the app detects that and probes media through ffmpeg
+instead. If you do install ffmpeg yourself and put it on `PATH`, it is used automatically.
+Models (≈ 7 MB) download on first analysis into `.\models\`.
+
+Keep the console window open while you use the app; closing it stops the server.
+Stop with **Ctrl+C**. A job that was running is marked *interrupted* and its finished stages
+are reused next time.
 
 Optional:
 
-- **Firewall prompt** — allow access on private networks only if you want to open the
-  app from another device (`start.bat --host 0.0.0.0`). By default it listens on
-  localhost only.
-- **Different port** — `set FACEPIPE_PORT=9000` before running `start.bat`.
-- **Different data folder** — `set FACEPIPE_DATA_DIR=D:\facepipe-data`.
+- **Another port** — in the console: `set FACEPIPE_PORT=9000` then `start.bat`.
+- **Another data folder** — `set FACEPIPE_DATA_DIR=D:\yoyoclip-data`.
+- **Reach it from another device** — `start.bat --host 0.0.0.0` (Windows Firewall will ask once).
 - **LR-ASD neural speaker detection** — in the console:
   `.venv\Scripts\pip install torch --index-url https://download.pytorch.org/whl/cpu`
   then `.venv\Scripts\pip install -e ".[lrasd]"`.
+- **MediaPipe fails to import** (`DLL load failed`) — install the
+  [Microsoft Visual C++ Redistributable (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe).
 
 ---
 
@@ -332,7 +348,10 @@ python scripts/ui_walkthrough.py        # headless Chrome: upload -> analyze -> 
 
 | symptom | fix |
 |---|---|
-| `start.bat` says Python not found | install Python 3.10+ and tick “Add python.exe to PATH”; reopen the console |
+| `start.bat` says Python not found | install Python 3.10+ (python.org, 64-bit) and tick “Add python.exe to PATH”; reopen the console. The Microsoft Store stub is not a real interpreter |
+| `pip install` fails with a long-path / `[WinError 206]` error | move the project to a short path such as `C:\yoyoclip`, or enable Windows long paths |
+| `ImportError: DLL load failed` importing mediapipe (Windows) | install the Microsoft Visual C++ Redistributable x64 |
+| Upload fails with `PermissionError` / “still in use” (Windows) | a player or browser tab is still streaming the old file; close it and retry |
 | `libEGL.so.1` / `libGLESv2.so.2` missing (Linux) | `sudo apt-get install libegl1 libgles2 libgl1 libglib2.0-0` |
 | “could not be decoded as a video” | the file is corrupt or an unsupported codec; re-export as H.264 MP4 |
 | No faces detected (clip renders centred) | faces are too small; MediaPipe needs ≈ ≥ 100 px face height. Check `phase1/manifest.json → frames_with_faces` |
