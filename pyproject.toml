@@ -1,0 +1,31 @@
+[project]
+name = "facepipe"
+version = "0.1.0"
+description = "Phase 1: per-frame face detection and 478-point face landmark extraction with MediaPipe"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+# Permissive-only dependency policy: no Ultralytics/YOLO or other AGPL-3.0 packages.
+dependencies = [
+    "mediapipe>=0.10",
+    "opencv-python-headless>=4.8",
+    "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+facepipe = "facepipe.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["facepipe*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = ["integration: needs the MediaPipe model and sample assets (network on first run)"]
