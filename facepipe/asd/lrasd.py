@@ -57,7 +57,7 @@ def extract_audio_16k(video_path: Path) -> np.ndarray:
         wav = Path(td) / "audio.wav"
         cmd = [ffmpeg_exe(), "-y", "-loglevel", "error", "-i", str(video_path), "-vn", "-ac", "1", "-ar", "16000",
                "-acodec", "pcm_s16le", str(wav)]
-        proc = subprocess.run(cmd, capture_output=True, text=True)
+        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
         if proc.returncode != 0 or not wav.exists():
             return np.zeros(0, dtype=np.int16)
         _, audio = wavfile.read(wav)

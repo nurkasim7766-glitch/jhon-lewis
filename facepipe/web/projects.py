@@ -174,7 +174,15 @@ class ProjectStore:
         self.get(project_id)
         self.db.execute("DELETE FROM projects WHERE id=?", (project_id,))
         shutil.rmtree(self.project_dir(project_id), ignore_errors=True)
+        if self.project_dir(project_id).exists():
+            # Windows keeps files that are open in a player locked; leave a marker so the
+            # leftover folder is removed on the next start.
+            (self.project_dir(project_id) / ".deleted").touch()
         self.db.log(None, "project", f"Deleted project {project_id}")
+
+    def sweep_deleted(self) -> None:
+        for marker in (self.data_dir / "projects").glob("*/.deleted"):
+            shutil.rmtree(marker.parent, ignore_errors=True)
 
     # -- uploads -----------------------------------------------------------------
     def attach_source(self, project_id: str, filename: str, tmp_path: Path) -> dict[str, Any]:
@@ -193,7 +201,11 @@ class ProjectStore:
         # Replacing the source invalidates every clip derived from the old one.
         self._clear_clips(project_id)
         for old in self.project_dir(project_id).glob("source.*"):
-            old.unlink(missing_ok=True)
+            try:
+                old.unlink(missing_ok=True)
+            except PermissionError as exc:  # Windows: file still open in a player/preview
+                tmp_path.unlink(missing_ok=True)
+                raise ValueError("the previous video is still in use (close any preview playing it) and could not be replaced") from exc
         dest = self.project_dir(project_id) / f"source{ext}"
         shutil.move(str(tmp_path), dest)
         info["size_bytes"] = dest.stat().st_size
@@ -310,7 +322,7 @@ class ProjectStore:
         mid = (clip["start_ms"] + clip["end_ms"]) / 2000.0
         proc = subprocess.run([ffmpeg_exe(), "-y", "-loglevel", "error", "-ss", f"{mid:.3f}", "-i", str(src),
                                "-frames:v", "1", "-vf", "scale=480:-2", "-q:v", "4", str(out)],
-                              capture_output=True, text=True)
+                              capture_output=True, text=True, encoding="utf-8", errors="replace")
         return out if proc.returncode == 0 and out.exists() else None
 
     # -- dashboard ---------------------------------------------------------------

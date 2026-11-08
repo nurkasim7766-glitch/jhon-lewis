@@ -31,6 +31,7 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     data_dir.mkdir(parents=True, exist_ok=True)
     db = Database(data_dir / "facepipe.db")
     store = ProjectStore(db, data_dir)
+    store.sweep_deleted()
     jobs = JobManager(db, store)
 
     app = FastAPI(title="facepipe", version="0.1.0", docs_url="/api/docs", openapi_url="/api/openapi.json")
@@ -125,7 +126,11 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
         ext = Path(file.filename or "").suffix.lower()
         if ext not in VIDEO_EXTENSIONS:
             raise ValueError(f"unsupported video format {ext or '(none)'}; use one of {', '.join(sorted(VIDEO_EXTENSIONS))}")
-        tmp = Path(tempfile.mkstemp(suffix=ext, dir=store.project_dir(pid))[1])
+        # mkstemp returns an open descriptor; it must be closed before the file is moved or
+        # deleted, otherwise Windows raises PermissionError (handles lock files there).
+        fd, tmp_name = tempfile.mkstemp(suffix=ext, dir=store.project_dir(pid))
+        os.close(fd)
+        tmp = Path(tmp_name)
         try:
             await _save_upload(file, MAX_UPLOAD_BYTES, tmp)
         except Exception:
@@ -336,7 +341,7 @@ def main() -> None:
     url = f"http://{args.host}:{args.port}/"
     if not args.no_browser:
         threading.Timer(1.2, lambda: webbrowser.open(url)).start()
-    print(f"\n  facepipe web  →  {url}\n  data dir      →  {app.state.data_dir}\n", flush=True)
+    print(f"\n  facepipe web  ->  {url}\n  data dir      ->  {app.state.data_dir}\n", flush=True)
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
 
 
