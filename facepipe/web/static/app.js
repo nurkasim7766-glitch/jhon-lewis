@@ -425,7 +425,8 @@ async function viewEditor(pid, cid) {
   $("#dbg").onclick = () => setMode(mode === "debug" ? "clip" : "debug");
   $("#out").onclick = () => setMode(mode === "output" ? "clip" : "output");
   $("#play").onclick = () => (v.paused ? v.play() : v.pause());
-  v.onplay = () => ($("#play").textContent = "❚❚"); v.onpause = () => ($("#play").textContent = "▶");
+  const playBtn = $("#play");
+  v.onplay = () => (playBtn.textContent = "❚❚"); v.onpause = () => (playBtn.textContent = "▶");
   tl.onclick = (e) => { const r = tl.getBoundingClientRect(); v.currentTime = ((e.clientX - r.left) / r.width) * (v.duration || c.duration_ms / 1000); };
   if (tracks) { const dur = c.duration_ms; tl.insertAdjacentHTML("afterbegin", tracks.segments.map((s) => `<div class="seg" style="left:${100 * s.start_ms / dur}%;width:${100 * (s.end_ms - s.start_ms) / dur}%;background:${s.speaker_face_id === null ? "#666" : faceColor(s.speaker_face_id)}"></div>`).join("")); }
   tl.insertAdjacentHTML("beforeend", `<span class="label">${fmtTime(c.start_ms)} in source</span>`);
@@ -435,6 +436,7 @@ async function viewEditor(pid, cid) {
   const fps = tracks?.video.fps || c.plan?.source.fps || 30;
   const frameAt = () => tracks ? tracks.frames[Math.min(tracks.frames.length - 1, Math.max(0, Math.round(v.currentTime * fps)))] : null;
   function draw() {
+    if (!document.body.contains(v)) return;
     const W = v.videoWidth, H = v.videoHeight; if (!W) return;
     if (ov.width !== W || ov.height !== H) { ov.width = W; ov.height = H; }
     const g = ov.getContext("2d"); g.clearRect(0, 0, W, H);
@@ -453,11 +455,10 @@ async function viewEditor(pid, cid) {
     if (vert.width !== ow / 2 || vert.height !== oh / 2) { vert.width = ow / 2; vert.height = oh / 2; }
     if (mode === "output") { vg.drawImage(v, 0, 0, vert.width, vert.height); }
     else if (f) { const [cx, cy, cw, ch] = f.c; vg.drawImage(v, cx, cy, cw, ch, 0, 0, vert.width, vert.height); }
-    $("#time").textContent = `${fmtTime(v.currentTime * 1000)} / ${fmtTime(c.duration_ms)}`;
+    const timeEl = $("#time"); if (timeEl) timeEl.textContent = `${fmtTime(v.currentTime * 1000)} / ${fmtTime(c.duration_ms)}`;
     head.style.left = `${100 * v.currentTime / (v.duration || c.duration_ms / 1000)}%`;
   }
-  let raf; const loop = () => { draw(); raf = requestAnimationFrame(loop); }; loop();
-  state.pollers.add(setInterval(() => { if (!document.body.contains(v)) cancelAnimationFrame(raf); }, 1000));
+  let raf; const loop = () => { if (!document.body.contains(v)) { cancelAnimationFrame(raf); return; } draw(); raf = requestAnimationFrame(loop); }; loop();
   v.addEventListener("loadeddata", draw);
 }
 
