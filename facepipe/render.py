@@ -11,6 +11,7 @@ from typing import Callable
 import cv2
 
 from facepipe.contract_phase2 import CropPlan, validate_crop_plan
+from facepipe.ffmpeg import ffmpeg_exe, probe_media
 
 
 class RenderError(RuntimeError):
@@ -24,13 +25,14 @@ def load_plan(path: str | Path) -> CropPlan:
 
 
 def has_audio_stream(video: Path) -> bool:
-    proc = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=codec_type",
-                           "-of", "csv=p=0", str(video)], capture_output=True, text=True)
-    return "audio" in proc.stdout
+    try:
+        return bool(probe_media(video)["has_audio"])
+    except (ValueError, FileNotFoundError):
+        return False
 
 
 def mux(video_only: Path, audio_source: Path, out_path: Path, crf: int = 18, preset: str = "medium") -> None:
-    cmd = ["ffmpeg", "-y", "-loglevel", "error", "-i", str(video_only)]
+    cmd = [ffmpeg_exe(), "-y", "-loglevel", "error", "-i", str(video_only)]
     if has_audio_stream(audio_source):
         cmd += ["-i", str(audio_source), "-map", "0:v:0", "-map", "1:a:0", "-c:a", "aac", "-b:a", "160k", "-shortest"]
     else:
@@ -74,9 +76,10 @@ def render(plan_path: str | Path, clip_path: str | Path, out_path: str | Path, c
 
 
 def probe(video: Path) -> dict:
-    proc = subprocess.run(["ffprobe", "-v", "error", "-show_entries",
-                           "stream=codec_type,width,height,nb_frames,r_frame_rate:format=duration",
-                           "-of", "json", str(video)], capture_output=True, text=True)
-    if proc.returncode != 0:
-        raise RenderError(f"ffprobe failed on {video}: {proc.stderr.strip()}")
-    return json.loads(proc.stdout)
+    """ffprobe-shaped summary ({streams:[...], format:{duration}}) built from probe_media."""
+    info = probe_media(video)
+    streams = [{"codec_type": "video", "width": info["width"], "height": info["height"],
+                "nb_frames": str(info["frames"] or 0)}]
+    if info["has_audio"]:
+        streams.append({"codec_type": "audio"})
+    return {"streams": streams, "format": {"duration": str(info["duration"] or 0.0)}}

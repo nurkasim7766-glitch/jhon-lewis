@@ -51,9 +51,11 @@ def extract_audio_16k(video_path: Path) -> np.ndarray:
     """Mono 16 kHz int16 PCM of the whole video; silence if the video has no audio."""
     from scipy.io import wavfile
 
+    from facepipe.ffmpeg import ffmpeg_exe
+
     with tempfile.TemporaryDirectory() as td:
         wav = Path(td) / "audio.wav"
-        cmd = ["ffmpeg", "-y", "-loglevel", "error", "-i", str(video_path), "-vn", "-ac", "1", "-ar", "16000",
+        cmd = [ffmpeg_exe(), "-y", "-loglevel", "error", "-i", str(video_path), "-vn", "-ac", "1", "-ar", "16000",
                "-acodec", "pcm_s16le", str(wav)]
         proc = subprocess.run(cmd, capture_output=True, text=True)
         if proc.returncode != 0 or not wav.exists():

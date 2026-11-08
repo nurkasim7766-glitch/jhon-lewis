@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 
@@ -23,9 +23,10 @@ def run_phase2(
     seg_cfg: SegmentationConfig | None = None,
     crop_cfg: CropConfig | None = None,
     video_path: str | Path | None = None,
+    on_step: Callable[[str], None] | None = None,
 ) -> tuple[SpeakersDoc, CropPlan]:
     data = load_phase1(phase1_dir)
-    return run_phase2_on_data(data, out_dir, backend, backend_kwargs, seg_cfg, crop_cfg, video_path)
+    return run_phase2_on_data(data, out_dir, backend, backend_kwargs, seg_cfg, crop_cfg, video_path, on_step)
 
 
 def run_phase2_on_data(
@@ -36,12 +37,16 @@ def run_phase2_on_data(
     seg_cfg: SegmentationConfig | None = None,
     crop_cfg: CropConfig | None = None,
     video_path: str | Path | None = None,
+    on_step: Callable[[str], None] | None = None,
 ) -> tuple[SpeakersDoc, CropPlan]:
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     seg_cfg = seg_cfg or SegmentationConfig()
+    step = on_step or (lambda s: None)
 
+    step("asd")
     asd = get_backend(backend, **(backend_kwargs or {})).score(data, Path(video_path) if video_path else None)
+    step("segmentation")
     active, segments = segment_speakers(data, asd, seg_cfg)
 
     frames = []
@@ -56,6 +61,7 @@ def run_phase2_on_data(
         frames=frames,
         segments=segments,
     )
+    step("cropplan")
     plan = plan_crops(data, segments, crop_cfg)
 
     speakers_dict, plan_dict = speakers.to_dict(), plan.to_dict()

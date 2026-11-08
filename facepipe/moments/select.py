@@ -70,24 +70,35 @@ def _pad(c: Candidate, transcript: Transcript, cfg: SelectionConfig) -> tuple[fl
     return round(start, 3), round(end, 3)
 
 
-def select_moment(transcript: Transcript, video_path: str | Path, cfg: SelectionConfig | None = None,
-                  scorer: MomentScorer | None = None) -> dict[str, Any]:
-    cfg = cfg or SelectionConfig()
-    scorer = scorer or get_scorer(cfg.scorer)
+def rank_candidates(transcript: Transcript, cfg: SelectionConfig, scorer: MomentScorer) -> list[Candidate]:
     candidates = generate_candidates(transcript, cfg)
     if not candidates:
         raise SelectionError(
             f"no sentence-aligned window between {cfg.min_ms / 1000:g}s and {cfg.max_ms / 1000:g}s exists in "
             f"{transcript.path} ({len(transcript.sentences)} sentences, {transcript.duration_ms / 1000:.1f}s)"
         )
-    ranked = sorted(scorer.score(candidates, transcript), key=lambda c: (c.score, -c.start_ms), reverse=True)
-    best = ranked[0]
+    return sorted(scorer.score(candidates, transcript), key=lambda c: (c.score, -c.start_ms), reverse=True)
+
+
+def diverse_candidates(ranked: list[Candidate], max_clips: int) -> list[Candidate]:
+    """Greedy pick of the best candidates whose sentence ranges do not overlap each other."""
+    chosen: list[Candidate] = []
+    for c in ranked:
+        if len(chosen) >= max_clips:
+            break
+        if all(c.last_sentence < k.first_sentence or c.first_sentence > k.last_sentence for k in chosen):
+            chosen.append(c)
+    return chosen
+
+
+def moment_doc(best: Candidate, ranked: list[Candidate], transcript: Transcript, video_path: str | Path,
+               cfg: SelectionConfig, scorer: MomentScorer) -> dict[str, Any]:
     start, end = _pad(best, transcript, cfg)
     return {
         "schema_version": MOMENT_SCHEMA_VERSION,
         "source": {"video": str(video_path), "transcript": transcript.path,
                    "transcript_duration_ms": transcript.duration_ms},
-        "selection": {**cfg.to_dict(), "scorer": scorer.describe(), "num_candidates": len(candidates)},
+        "selection": {**cfg.to_dict(), "scorer": scorer.describe(), "num_candidates": len(ranked)},
         "moment": {
             "start_ms": start, "end_ms": end, "duration_ms": round(end - start, 3),
             "first_sentence": best.first_sentence, "last_sentence": best.last_sentence,
@@ -97,6 +108,23 @@ def select_moment(transcript: Transcript, video_path: str | Path, cfg: Selection
         },
         "candidates": [c.to_dict() for c in ranked[: cfg.top_n]],
     }
+
+
+def select_moment(transcript: Transcript, video_path: str | Path, cfg: SelectionConfig | None = None,
+                  scorer: MomentScorer | None = None) -> dict[str, Any]:
+    cfg = cfg or SelectionConfig()
+    scorer = scorer or get_scorer(cfg.scorer)
+    ranked = rank_candidates(transcript, cfg, scorer)
+    return moment_doc(ranked[0], ranked, transcript, video_path, cfg, scorer)
+
+
+def select_moments(transcript: Transcript, video_path: str | Path, cfg: SelectionConfig | None = None,
+                   scorer: MomentScorer | None = None, max_clips: int = 5) -> list[dict[str, Any]]:
+    """Top non-overlapping moments, each as a full 5.5 moment.json document (best first)."""
+    cfg = cfg or SelectionConfig()
+    scorer = scorer or get_scorer(cfg.scorer)
+    ranked = rank_candidates(transcript, cfg, scorer)
+    return [moment_doc(c, ranked, transcript, video_path, cfg, scorer) for c in diverse_candidates(ranked, max_clips)]
 
 
 def validate_moment(doc: dict[str, Any], transcript: Transcript | None = None) -> None:

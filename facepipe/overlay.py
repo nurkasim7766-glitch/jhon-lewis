@@ -94,7 +94,8 @@ def load_phase_artifacts(phase1_dir: Path, phase2_dir: Path) -> tuple[list[Frame
     return frames, speakers, plan
 
 
-def render_debug(clip_path: Path, phase1_dir: Path, phase2_dir: Path, out_path: Path, crf: int = 23) -> Path:
+def render_debug(clip_path: Path, phase1_dir: Path, phase2_dir: Path, out_path: Path, crf: int = 23,
+                 progress=None) -> Path:
     frames, speakers, plan = load_phase_artifacts(phase1_dir, phase2_dir)
     cap = cv2.VideoCapture(str(clip_path))
     fps = float(plan.source["fps"])
@@ -108,6 +109,8 @@ def render_debug(clip_path: Path, phase1_dir: Path, phase2_dir: Path, out_path: 
             if not ok:
                 break
             writer.write(draw_overlay(bgr, frames[i], speakers, plan, i))
+            if progress:
+                progress(i + 1, len(frames))
         cap.release()
         writer.release()
         mux(tmp, clip_path, out_path, crf=crf, preset="veryfast")

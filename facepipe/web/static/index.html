@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>facepipe — AI video clipping</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/styles.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%237c5cff'/%3E%3Cpath d='M9 10h14v12H9z' fill='none' stroke='white' stroke-width='2.2'/%3E%3Ccircle cx='16' cy='16' r='2.6' fill='white'/%3E%3C/svg%3E">
+</head>
+<body>
+<div id="app" class="app">
+  <aside class="sidebar">
+    <a class="brand" href="#/">
+      <span class="brand-mark"></span>
+      <span class="brand-name">facepipe</span>
+    </a>
+    <nav class="nav">
+      <a href="#/" data-route="dashboard"><i class="ico">▦</i> Dashboard</a>
+      <a href="#/projects" data-route="projects"><i class="ico">▤</i> Projects</a>
+      <a href="#/upload" data-route="upload"><i class="ico">⇪</i> New upload</a>
+      <a href="#/exports" data-route="exports"><i class="ico">⤓</i> Export center</a>
+    </nav>
+    <div class="sidebar-foot">
+      <div id="engine-status" class="engine-status"><span class="dot"></span> connecting…</div>
+    </div>
+  </aside>
+  <main class="main">
+    <header class="topbar">
+      <div id="crumbs" class="crumbs"></div>
+      <div class="topbar-actions">
+        <a class="btn btn-primary" href="#/upload">＋ New project</a>
+      </div>
+    </header>
+    <section id="view" class="view"></section>
+  </main>
+</div>
+<div id="toasts" class="toasts"></div>
+<div id="modal-root"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

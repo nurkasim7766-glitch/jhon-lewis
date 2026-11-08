@@ -74,12 +74,20 @@ class StageResult:
 
 
 Log = Callable[[str], None]
+StageHook = Callable[[str, str], None]  # (stage, event) with event in {"start", "done", "reused"}
+Progress = Callable[[str, int, int], None]  # (stage, done, total)
+
+
+class PipelineCancelled(RuntimeError):
+    pass
 
 
 def cut_clip(video: Path, start_ms: float, end_ms: float, out: Path, fps_hint: float | None = None) -> None:
     """Frame-accurate re-encode of [start, end) with audio; keyframe-copy cuts would drift."""
+    from facepipe.ffmpeg import ffmpeg_exe
+
     out.parent.mkdir(parents=True, exist_ok=True)
-    cmd = ["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{start_ms / 1000:.3f}", "-to", f"{end_ms / 1000:.3f}",
+    cmd = [ffmpeg_exe(), "-y", "-loglevel", "error", "-ss", f"{start_ms / 1000:.3f}", "-to", f"{end_ms / 1000:.3f}",
            "-i", str(video), "-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-pix_fmt", "yuv420p",
            "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(out)]
     proc = subprocess.run(cmd, capture_output=True, text=True)
@@ -88,10 +96,16 @@ def cut_clip(video: Path, start_ms: float, end_ms: float, out: Path, fps_hint: f
 
 
 class Pipeline:
-    def __init__(self, cfg: PipelineConfig, force: set[str] | None = None, log: Log | None = None):
+    def __init__(self, cfg: PipelineConfig, force: set[str] | None = None, log: Log | None = None,
+                 on_stage: StageHook | None = None, progress: Progress | None = None,
+                 cancel_check: Callable[[], bool] | None = None, on_step: Callable[[str], None] | None = None):
         self.cfg = cfg
         self.work = Path(cfg.workdir)
         self.log = log or (lambda s: None)
+        self.on_stage = on_stage or (lambda stage, event: None)
+        self.progress = progress or (lambda stage, done, total: None)
+        self.cancel_check = cancel_check or (lambda: False)
+        self.on_step = on_step or (lambda step: None)
         force = set(force or ())
         if "all" in force:
             force = set(STAGES)
@@ -126,17 +140,38 @@ class Pipeline:
             "debug": [self.debug_path],
         }[stage]
 
+    def _check_cancel(self) -> None:
+        if self.cancel_check():
+            raise PipelineCancelled("cancelled")
+
+    def _frame_progress(self, stage: str) -> Callable[[int, int], None]:
+        def cb(done: int, total: int) -> None:
+            self._check_cancel()
+            self.progress(stage, done, total)
+        return cb
+
     def _run_stage(self, stage: str, fn: Callable[[], None]) -> None:
         outs = self._outputs(stage)
         if stage not in self.force and all(p.exists() for p in outs):
             self.log(f"[{stage}] reused {', '.join(p.name for p in outs)}")
             self.results.append(StageResult(stage, "reused", 0.0, [str(p) for p in outs]))
+            self.on_stage(stage, "reused")
             return
+        self._check_cancel()
+        self.on_stage(stage, "start")
         t0 = time.perf_counter()
-        fn()
+        try:
+            fn()
+        except BaseException:
+            # never leave half-written outputs that a later run would "reuse"
+            for p in outs:
+                if p.is_file():
+                    p.unlink(missing_ok=True)
+            raise
         dt = time.perf_counter() - t0
         self.log(f"[{stage}] done in {dt:.1f}s -> {', '.join(p.name for p in outs)}")
         self.results.append(StageResult(stage, "ran", round(dt, 3), [str(p) for p in outs]))
+        self.on_stage(stage, "done")
 
     # -- stages ------------------------------------------------------------------
     def stage_moment(self) -> None:
@@ -159,24 +194,35 @@ class Pipeline:
     def stage_detect(self) -> None:
         from facepipe.extract import extract_video
 
-        extract_video(self.clip_path, self.phase1_dir, self.cfg.detector)
+        total = self._clip_frame_count()
+        cb = self._frame_progress("detect")
+        extract_video(self.clip_path, self.phase1_dir, self.cfg.detector, progress=lambda i: cb(i + 1, total))
+
+    def _clip_frame_count(self) -> int:
+        import cv2
+
+        cap = cv2.VideoCapture(str(self.clip_path))
+        n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        cap.release()
+        return max(n, 1)
 
     def stage_speakers(self) -> None:
         from facepipe.phase2 import run_phase2
 
         run_phase2(self.phase1_dir, self.phase2_dir, backend=self.cfg.asd_backend, seg_cfg=self.cfg.segmentation,
-                   crop_cfg=self.cfg.crop, video_path=self.clip_path)
+                   crop_cfg=self.cfg.crop, video_path=self.clip_path, on_step=self.on_step)
 
     def stage_render(self) -> None:
         from facepipe.render import render
 
         render(self.phase2_dir / "crop_plan.json", self.clip_path, self.output_path, crf=self.cfg.render_crf,
-               preset=self.cfg.render_preset)
+               preset=self.cfg.render_preset, progress=self._frame_progress("render"))
 
     def stage_debug(self) -> None:
         from facepipe.overlay import render_debug
 
-        render_debug(self.clip_path, self.phase1_dir, self.phase2_dir, self.debug_path)
+        render_debug(self.clip_path, self.phase1_dir, self.phase2_dir, self.debug_path,
+                     progress=self._frame_progress("debug"))
 
     def run(self, until: str = "debug") -> list[StageResult]:
         self.work.mkdir(parents=True, exist_ok=True)
