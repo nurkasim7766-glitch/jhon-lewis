@@ -64,11 +64,42 @@ def cmd_validate(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_speakers(args: argparse.Namespace) -> int:
+    from facepipe.cropplan import CropConfig
+    from facepipe.phase2 import run_phase2
+    from facepipe.segmentation import SegmentationConfig
+
+    seg_cfg = SegmentationConfig(min_segment_ms=args.min_segment_ms, switch_confirm_ms=args.switch_confirm_ms)
+    crop_cfg = CropConfig(output_width=args.output_width, output_height=args.output_height)
+    speakers, plan = run_phase2(args.phase1_dir, args.out_dir, backend=args.backend, seg_cfg=seg_cfg,
+                                crop_cfg=crop_cfg, video_path=args.video)
+    print(f"{args.backend}: {len(speakers.segments)} segments, speakers "
+          f"{[s.speaker_face_id for s in speakers.segments]}; wrote speakers.json + crop_plan.json to {args.out_dir}")
+    return 0
+
+
+def cmd_validate_phase2(args: argparse.Namespace) -> int:
+    from facepipe.contract_phase2 import Phase2ContractError, validate_crop_plan, validate_speakers
+
+    out_dir = Path(args.out_dir)
+    try:
+        speakers = json.loads((out_dir / "speakers.json").read_text(encoding="utf-8"))
+        plan = json.loads((out_dir / "crop_plan.json").read_text(encoding="utf-8"))
+        validate_speakers(speakers)
+        validate_crop_plan(plan)
+    except (Phase2ContractError, FileNotFoundError, KeyError) as exc:
+        print(f"INVALID: {exc}", file=sys.stderr)
+        return 1
+    print(f"OK: {len(speakers['segments'])} segments, {len(plan['frames'])} crop frames, "
+          f"output {plan['output']['width']}x{plan['output']['height']}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="facepipe")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p = sub.add_parser("extract", help="run Phase 1 on a video")
+    p = sub.add_parser("extract", help="Phase 1: run face detection + landmarks on a video")
     p.add_argument("video")
     p.add_argument("out_dir")
     p.add_argument("--max-faces", type=int, default=4)
@@ -79,6 +110,21 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("validate", help="check a Phase 1 output directory against the contract")
     p.add_argument("out_dir")
     p.set_defaults(func=cmd_validate)
+
+    p = sub.add_parser("speakers", help="Phase 2: active speaker segments + crop plan from Phase 1 output")
+    p.add_argument("phase1_dir")
+    p.add_argument("out_dir")
+    p.add_argument("--backend", choices=["heuristic", "lrasd"], default="heuristic")
+    p.add_argument("--video", help="source video (needed by lrasd; defaults to manifest path)")
+    p.add_argument("--min-segment-ms", type=float, default=1500.0)
+    p.add_argument("--switch-confirm-ms", type=float, default=300.0)
+    p.add_argument("--output-width", type=int, default=1080)
+    p.add_argument("--output-height", type=int, default=1920)
+    p.set_defaults(func=cmd_speakers)
+
+    p = sub.add_parser("validate-phase2", help="check speakers.json and crop_plan.json against the contracts")
+    p.add_argument("out_dir")
+    p.set_defaults(func=cmd_validate_phase2)
 
     args = parser.parse_args(argv)
     return args.func(args)

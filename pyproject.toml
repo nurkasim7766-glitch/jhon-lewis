@@ -10,10 +10,14 @@ dependencies = [
     "mediapipe>=0.10",
     "opencv-python-headless>=4.8",
     "numpy>=1.24",
+    "scipy>=1.10",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+# LR-ASD backend (MIT). Install torch from the CPU index if no GPU:
+#   uv pip install torch --index-url https://download.pytorch.org/whl/cpu
+lrasd = ["torch>=2.0", "python_speech_features>=0.6"]
 
 [project.scripts]
 facepipe = "facepipe.cli:main"
