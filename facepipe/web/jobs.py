@@ -29,6 +29,7 @@ log = logging.getLogger("facepipe.web.jobs")
 # UI step catalogue: (id, label). Steps map 1:1 onto engine callbacks; none is synthetic.
 STEPS: list[tuple[str, str]] = [
     ("ingest", "Video ingestion"),
+    ("transcribe", "Automatic transcription (local Whisper)"),
     ("transcript", "Transcript processing"),
     ("moments", "AI moment selection"),
     ("clip", "Clip extraction"),
@@ -192,14 +193,42 @@ class JobManager:
         project = self.store.get(project_id)
         src = self.store.source_path(project)
         tpath = self.store.transcript_path(project_id)
-        if not src or not tpath.exists():
-            raise ValueError("project needs both a video and a transcript before analysis")
+        if not src:
+            raise ValueError("project needs a video before analysis")
+        readiness = self.store.readiness(project)
+        if not readiness["can_analyze"]:
+            raise ValueError(readiness["message"])
         settings = ProjectSettings.from_dict(project["settings"])
         self.store.touch(project_id, status="analyzing", error=None)
 
         self._step(job_id, "ingest", "running", message=f"{project['source_filename']}")
         info = project["source_info"] or {}
         self._step(job_id, "ingest", "done", message=f"{info.get('width')}x{info.get('height')}, {info.get('duration', 0):.0f}s")
+
+        if tpath.exists():
+            self._step(job_id, "transcribe", "reused", message="transcript supplied by user")
+        else:
+            from facepipe.transcribe import transcribe_video
+
+            self._step(job_id, "transcribe", "running", message=f"whisper {settings.transcribe_model}, loading model…")
+
+            def asr_progress(done_s: float, total_s: float) -> None:
+                self._step(job_id, "transcribe", "running", done=int(done_s), total=int(total_s) or None,
+                           message=f"whisper {settings.transcribe_model}")
+
+            generated = tpath.with_name("transcript.generated.json")
+            try:
+                transcribe_video(src, generated, model_size=settings.transcribe_model,
+                                 language=settings.transcribe_language or None, progress=asr_progress,
+                                 cancel_check=lambda: self._cancelled(job_id))
+            except InterruptedError:
+                raise JobCancelled()
+            self.store.attach_transcript(project_id, generated.name, generated.read_bytes(), generated=True)
+            generated.unlink(missing_ok=True)
+            tinfo = self.store.get(project_id)["transcript_info"]
+            self._step(job_id, "transcribe", "done", message=f"{tinfo['words']} words transcribed")
+        if self._cancelled(job_id):
+            raise JobCancelled()
 
         self._step(job_id, "transcript", "running")
         transcript = load_transcript(tpath)
@@ -266,7 +295,7 @@ class JobManager:
             self.store.set_clip_status(cid, "processing")
             # reset per-clip step statuses so the UI shows this clip's real state
             prog = self.get(job_id)["progress"]
-            steps = {k: v for k, v in prog.get("steps", {}).items() if k in ("ingest", "transcript", "moments")}
+            steps = {k: v for k, v in prog.get("steps", {}).items() if k in ("ingest", "transcribe", "transcript", "moments")}
             self._set_progress(job_id, steps=steps, message=f"clip {n}/{total}", clip_index=n, clip_total=total, clip=cid)
             try:
                 pipeline = self._clip_pipeline(job_id, project, clip, force)

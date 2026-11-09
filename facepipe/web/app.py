@@ -54,6 +54,7 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
     @app.get("/api/health")
     def health() -> dict[str, Any]:
         from facepipe.ffmpeg import ffmpeg_exe, ffprobe_exe
+        from facepipe.transcribe import INSTALL_HINT, MODEL_SIZES, transcription_available
 
         try:
             import torch  # noqa: F401
@@ -61,6 +62,8 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
         except ImportError:
             lrasd = False
         return {"ok": True, "ffmpeg": ffmpeg_exe(), "ffprobe": ffprobe_exe(), "lrasd_available": lrasd,
+                "transcription_available": transcription_available(), "transcription_install": INSTALL_HINT,
+                "transcription_models": list(MODEL_SIZES),
                 "video_formats": sorted(VIDEO_EXTENSIONS), "transcript_formats": sorted(TRANSCRIPT_EXTENSIONS),
                 "max_upload_bytes": MAX_UPLOAD_BYTES, "steps": [{"id": s, "label": l} for s, l in STEPS],
                 "data_dir": str(data_dir)}
@@ -154,12 +157,20 @@ def create_app(data_dir: str | Path | None = None) -> FastAPI:
             raise ValueError("provide a transcript file or JSON text")
         return store.attach_transcript(pid, name, content)
 
+    @app.get("/api/projects/{pid}/transcript")
+    def download_transcript(pid: str) -> FileResponse:
+        store.get(pid)
+        return _file(store.transcript_path(pid), "application/json", f"{pid}-transcript.json")
+
     # -- jobs --------------------------------------------------------------------
     @app.post("/api/projects/{pid}/analyze", status_code=202)
     def analyze(pid: str) -> dict[str, Any]:
         p = store.get(pid)
-        if not store.source_path(p) or not store.transcript_path(pid).exists():
-            raise ValueError("upload a video and a transcript first")
+        if not store.source_path(p):
+            raise ValueError("upload a video first")
+        readiness = store.readiness(p)
+        if not readiness["can_analyze"]:
+            raise ValueError(readiness["message"])
         return jobs.submit(pid, "analyze")
 
     @app.post("/api/projects/{pid}/process", status_code=202)

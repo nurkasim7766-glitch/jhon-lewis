@@ -64,7 +64,7 @@ echo  First run: creating virtual environment in .venv ...
 if errorlevel 1 goto :venv_failed
 echo  Installing dependencies - this takes a few minutes the first time ...
 ".venv\Scripts\python.exe" -m pip install --upgrade pip
-".venv\Scripts\python.exe" -m pip install -e ".[dev]"
+".venv\Scripts\python.exe" -m pip install -e ".[dev,transcribe]"
 if errorlevel 1 goto :install_failed
 echo  Installation complete.
 
@@ -73,7 +73,7 @@ REM Re-install if the package or a dependency is missing (e.g. after a git pull)
 ".venv\Scripts\python.exe" -c "import facepipe.web.app" >nul 2>&1
 if not errorlevel 1 goto :run
 echo  Updating dependencies ...
-".venv\Scripts\python.exe" -m pip install -e ".[dev]"
+".venv\Scripts\python.exe" -m pip install -e ".[dev,transcribe]"
 if errorlevel 1 goto :install_failed
 
 :run

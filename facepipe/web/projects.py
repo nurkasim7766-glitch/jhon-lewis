@@ -48,6 +48,8 @@ class ProjectSettings:
     render_crf: int = 18
     render_preset: str = "medium"
     debug_overlay: bool = True
+    transcribe_model: str = "base"  # faster-whisper size used when no transcript is uploaded
+    transcribe_language: str = ""  # "" = auto-detect
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "ProjectSettings":
@@ -71,6 +73,10 @@ class ProjectSettings:
             raise ValueError("render_crf must be 0-51")
         if self.render_preset not in ("ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow"):
             raise ValueError("unknown x264 preset")
+        from facepipe.transcribe import MODEL_SIZES
+
+        if self.transcribe_model not in MODEL_SIZES:
+            raise ValueError(f"transcribe_model must be one of {', '.join(MODEL_SIZES)}")
 
     def selection_config(self) -> SelectionConfig:
         return SelectionConfig(min_ms=self.min_clip_s * 1000, max_ms=self.max_clip_s * 1000, scorer=self.scorer,
@@ -148,6 +154,7 @@ class ProjectStore:
             "selected": sum(1 for c in clips if c["selected"]),
             "rendered": sum(1 for c in clips if c["status"] == "rendered"),
         }
+        row["readiness"] = self.readiness(row)
         job = self.db.one("SELECT id, kind, status, progress FROM jobs WHERE project_id=? ORDER BY created_at DESC LIMIT 1",
                           (row["id"],))
         row["last_job"] = {**job, "progress": loads(job["progress"])} if job else None
@@ -157,6 +164,34 @@ class ProjectStore:
         fields["updated_at"] = time.time()
         cols = ", ".join(f"{k}=?" for k in fields)
         self.db.execute(f"UPDATE projects SET {cols} WHERE id=?", (*fields.values(), project_id))
+
+    def readiness(self, project: dict[str, Any]) -> dict[str, Any]:
+        """Whether analysis can start, and the exact reason when it cannot.
+
+        A video is required. A transcript is optional: without one, analysis transcribes the
+        audio locally if faster-whisper is installed; otherwise the user is told plainly.
+        """
+        from facepipe.transcribe import INSTALL_HINT, transcription_available
+
+        has_video = bool(project.get("source_filename"))
+        has_transcript = bool(project.get("transcript_filename"))
+        has_audio = bool((project.get("source_info") or {}).get("has_audio"))
+        asr = transcription_available()
+        if not has_video:
+            return {"can_analyze": False, "transcript_mode": "none", "transcription_available": asr,
+                    "message": "Upload a video to enable analysis."}
+        if has_transcript:
+            return {"can_analyze": True, "transcript_mode": "uploaded", "transcription_available": asr,
+                    "message": "Transcript uploaded. Ready to analyze."}
+        if asr and has_audio:
+            model = ProjectSettings.from_dict(project.get("settings") or {}).transcribe_model
+            return {"can_analyze": True, "transcript_mode": "auto", "transcription_available": True,
+                    "message": f"No transcript uploaded: the audio will be transcribed locally with Whisper ({model}) as the first analysis step. Upload a transcript to skip this."}
+        if asr and not has_audio:
+            return {"can_analyze": False, "transcript_mode": "missing", "transcription_available": True,
+                    "message": "This video has no audio track, so it cannot be transcribed automatically. Upload a transcript JSON to continue."}
+        return {"can_analyze": False, "transcript_mode": "missing", "transcription_available": False,
+                "message": f"A transcript is required and local transcription is not installed. Either upload a transcript JSON, or install it with: {INSTALL_HINT}  (then restart the app)."}
 
     def rename(self, project_id: str, name: str) -> dict[str, Any]:
         self.get(project_id)
@@ -209,13 +244,11 @@ class ProjectStore:
         dest = self.project_dir(project_id) / f"source{ext}"
         shutil.move(str(tmp_path), dest)
         info["size_bytes"] = dest.stat().st_size
-        project = self.get(project_id)
-        status = "ready" if project.get("transcript_filename") else "uploaded"
-        self.touch(project_id, source_filename=filename, source_info=dumps(info), status=status, error=None)
+        self.touch(project_id, source_filename=filename, source_info=dumps(info), status="ready", error=None)
         self.db.log(project_id, "upload", f"Uploaded video {filename} ({info['duration']:.0f}s)")
         return self.get(project_id)
 
-    def attach_transcript(self, project_id: str, filename: str, content: bytes) -> dict[str, Any]:
+    def attach_transcript(self, project_id: str, filename: str, content: bytes, generated: bool = False) -> dict[str, Any]:
         from facepipe.transcript import TranscriptError, load_transcript
 
         dest = self.transcript_path(project_id)
@@ -230,11 +263,12 @@ class ProjectStore:
         self._clear_clips(project_id)
         tmp.replace(dest)
         info = {"sentences": len(t.sentences), "duration_ms": t.duration_ms, "speakers": t.speakers,
-                "words": sum(len(s.words) for s in t.sentences)}
+                "words": sum(len(s.words) for s in t.sentences), "generated": generated}
         project = self.get(project_id)
         status = "ready" if project.get("source_filename") else project["status"]
         self.touch(project_id, transcript_filename=filename, transcript_info=dumps(info), status=status, error=None)
-        self.db.log(project_id, "upload", f"Added transcript ({len(t.sentences)} sentences)")
+        self.db.log(project_id, "upload" if not generated else "analysis",
+                    f"{'Generated' if generated else 'Added'} transcript ({len(t.sentences)} sentences)")
         return self.get(project_id)
 
     def _clear_clips(self, project_id: str) -> None:

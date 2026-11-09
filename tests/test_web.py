@@ -29,7 +29,7 @@ def _transcript_bytes() -> bytes:
 def test_health_and_defaults(client):
     h = client.get("/api/health").json()
     assert h["ok"] and h["ffmpeg"] and ".mp4" in h["video_formats"]
-    assert [s["id"] for s in h["steps"]][:3] == ["ingest", "transcript", "moments"]
+    assert [s["id"] for s in h["steps"]][:4] == ["ingest", "transcribe", "transcript", "moments"]
     d = client.get("/api/settings/defaults").json()
     assert d["scorer"] == "heuristic" and d["asd_backend"] == "heuristic" and d["allow_hosted_llm"] is False
 
@@ -64,7 +64,7 @@ def test_upload_analyze_persist(tmp_path):
         pid = p["id"]
         with video.open("rb") as fh:
             r = c.post(f"/api/projects/{pid}/video", files={"file": ("source.mp4", fh, "video/mp4")})
-        assert r.status_code == 200 and r.json()["status"] == "uploaded"
+        assert r.status_code == 200 and r.json()["status"] == "ready"  # video alone is enough
         assert r.json()["source_info"]["duration"] == pytest.approx(180, abs=1)
         r = c.post(f"/api/projects/{pid}/transcript", files={"file": ("t.json", _transcript_bytes(), "application/json")})
         assert r.status_code == 200 and r.json()["status"] == "ready"
@@ -79,7 +79,7 @@ def test_upload_analyze_persist(tmp_path):
                 break
             time.sleep(0.5)
         assert job["status"] == "done", job
-        assert {k: v["status"] for k, v in job["progress"]["steps"].items()} == {"ingest": "done", "transcript": "done", "moments": "done"}
+        assert {k: v["status"] for k, v in job["progress"]["steps"].items()} == {"ingest": "done", "transcribe": "reused", "transcript": "done", "moments": "done"}
         clips = c.get(f"/api/projects/{pid}/clips").json()
         assert len(clips) == 3 and clips[0]["score"] >= clips[1]["score"] >= clips[2]["score"]
         assert all(c_["files"]["thumbnail"] for c_ in clips)

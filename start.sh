@@ -8,9 +8,9 @@ if [ ! -x .venv/bin/python ]; then
   python3 -m venv .venv
   .venv/bin/python -m pip install --upgrade pip >/dev/null
   echo "Installing dependencies ..."
-  .venv/bin/python -m pip install -e ".[dev]"
+  .venv/bin/python -m pip install -e ".[dev,transcribe]"
 fi
-.venv/bin/python -c "import facepipe.web.app" 2>/dev/null || .venv/bin/python -m pip install -e ".[dev]"
+.venv/bin/python -c "import facepipe.web.app" 2>/dev/null || .venv/bin/python -m pip install -e ".[dev,transcribe]"
 
 PORT="${FACEPIPE_PORT:-8765}"
 echo "Starting facepipe on http://127.0.0.1:${PORT}/  (Ctrl+C to stop)"

@@ -41,7 +41,7 @@ function confirmModal(title, text, okLabel = "Delete") {
   });
 }
 const statusPill = (s) => {
-  const map = { new: ["", "New"], uploaded: ["info", "Needs transcript"], ready: ["info", "Ready"], analyzing: ["accent", "Analyzing"], analyzed: ["ok", "Moments found"], processing: ["accent", "Processing"], error: ["err", "Error"],
+  const map = { new: ["", "New"], ready: ["info", "Ready"], analyzing: ["accent", "Analyzing"], analyzed: ["ok", "Moments found"], processing: ["accent", "Processing"], error: ["err", "Error"],
     candidate: ["", "Candidate"], rendered: ["ok", "Rendered"], queued: ["warn", "Queued"], running: ["accent", "Running"], done: ["ok", "Done"], failed: ["err", "Failed"], cancelled: ["", "Cancelled"], interrupted: ["warn", "Interrupted"] };
   const [k, l] = map[s] || ["", s]; const spin = ["analyzing", "processing", "running"].includes(s) ? '<span class="spin"></span>' : "";
   return `<span class="pill ${k}">${spin}${esc(l)}</span>`;
@@ -132,6 +132,13 @@ async function viewProjects() {
 }
 
 // ---------------------------------------------------------------- upload
+function readinessBanner(project) {
+  if (!project) return `<div class="banner info" id="readiness" style="margin-top:12px">Name the project and upload a video. A transcript is optional${state.health?.transcription_available ? " — without one the audio is transcribed locally" : ""}.</div>`;
+  const r = project.readiness || {};
+  const kind = r.can_analyze ? (r.transcript_mode === "auto" ? "info" : "ok") : (project.source_filename ? "warn" : "info");
+  const icon = r.can_analyze ? "✓" : "ⓘ";
+  return `<div class="banner ${kind === "ok" ? "info" : kind}" id="readiness" data-can="${r.can_analyze ? 1 : 0}" style="margin-top:12px">${icon} ${esc(r.message || "")}</div>`;
+}
 async function viewUpload(pid) {
   let project = pid ? await api.get(`/api/projects/${pid}`) : null;
   crumbs(project ? [["Projects", "#/projects"], [project.name, `#/p/${project.id}`], ["Upload"]] : [["New upload"]]);
@@ -154,9 +161,9 @@ async function viewUpload(pid) {
         <div id="video-error"></div>
       </div>
       <div class="card">
-        <div class="card-head"><h2>3 · Transcript</h2>${project?.transcript_filename ? statusPill("done") : ""}</div>
+        <div class="card-head"><h2>3 · Transcript <span class="pill">optional</span></h2>${project?.transcript_filename ? statusPill("done") : ""}</div>
         <div class="dropzone ${project?.transcript_filename ? "done" : ""}" id="dz-tr">
-          ${project?.transcript_filename ? `<div class="big">✓</div><b>${esc(project.transcript_filename)}</b><div class="muted small">${project.transcript_info.sentences} sentences · ${project.transcript_info.words} words · speakers: ${project.transcript_info.speakers.join(", ") || "none"} · ${fmtClock(project.transcript_info.duration_ms)}</div>` : `<div class="big">≡</div><b>Drop a transcript JSON</b> or click to browse<div class="dim small" style="margin-top:6px">Whisper / faster-whisper / WhisperX <code>segments</code> format (word timings optional)</div>`}
+          ${project?.transcript_filename ? `<div class="big">✓</div><b>${esc(project.transcript_filename)}</b>${project.transcript_info.generated ? ' <span class="pill accent">auto-generated</span>' : ""}<div class="muted small">${project.transcript_info.sentences} sentences · ${project.transcript_info.words} words · speakers: ${project.transcript_info.speakers.join(", ") || "none"} · ${fmtClock(project.transcript_info.duration_ms)}</div>${project.transcript_info.generated ? `<div class="dim small" style="margin-top:6px"><a href="/api/projects/${project.id}/transcript" style="text-decoration:underline">download it</a> · drop your own file to replace it</div>` : ""}` : `<div class="big">≡</div><b>Drop a transcript JSON</b> or click to browse<div class="dim small" style="margin-top:6px">Whisper / faster-whisper / WhisperX <code>segments</code> format (word timings optional)${h?.transcription_available ? "<br>Leave empty to transcribe the audio locally during analysis." : ""}</div>`}
           <input type="file" id="f-tr" accept=".json,application/json" hidden>
         </div>
         <details style="margin-top:10px"><summary class="muted small" style="cursor:pointer">…or paste transcript JSON</summary><textarea class="input" id="tr-text" placeholder='{"segments":[{"start":0.0,"end":3.2,"text":"Hello there.","speaker":"A"}]}'></textarea><button class="btn btn-sm" id="tr-paste" style="margin-top:8px">Use pasted transcript</button></details>
@@ -165,8 +172,8 @@ async function viewUpload(pid) {
       <div class="card">
         <div class="card-head"><h2>4 · Analyze</h2></div>
         <p class="muted">Analysis selects sentence-aligned moments locally (no cloud calls), then processes the selected clips: face &amp; landmark tracking, active-speaker detection, speaker segmentation, crop planning and rendering.</p>
-        <div class="actions" style="margin-top:12px"><button class="btn btn-primary" id="go" ${project && project.status === "ready" || project?.status === "analyzed" || project?.status === "error" ? "" : "disabled"}>✦ Start AI analysis</button>${project ? `<a class="btn" href="#/p/${project.id}/settings">Settings</a>` : ""}</div>
-        <p class="help" style="margin-top:10px">${project ? (project.source_filename && project.transcript_filename ? "Ready to analyze." : "Upload both a video and a transcript to enable analysis.") : "Create the project by naming it and uploading a video."}</p>
+        ${readinessBanner(project)}
+        <div class="actions" style="margin-top:12px"><button class="btn btn-primary" id="go" ${project?.readiness?.can_analyze && !["analyzing", "processing"].includes(project.status) ? "" : "disabled"}>✦ Start AI analysis</button>${project ? `<a class="btn" href="#/p/${project.id}/settings">Settings</a>` : ""}</div>
       </div>
     </div>`;
 
@@ -221,11 +228,12 @@ async function viewProject(pid) {
     <div class="section-title"><div><h1 id="title" contenteditable="true" spellcheck="false" title="Click to rename">${esc(p.name)}</h1><div class="muted small">created ${ago(p.created_at)} · ${statusPill(p.status)}</div></div>
       <div class="actions">
         ${p.clip_counts.total ? `<a class="btn" href="#/p/${p.id}/clips">✦ ${p.clip_counts.total} moments</a>` : ""}
-        ${["ready", "analyzed", "error"].includes(p.status) ? `<button class="btn btn-primary" id="analyze">✦ ${p.clip_counts.total ? "Re-run moment selection" : "Start AI analysis"}</button>` : ""}
+        ${["ready", "analyzed", "error"].includes(p.status) && p.readiness?.can_analyze ? `<button class="btn btn-primary" id="analyze">✦ ${p.clip_counts.total ? "Re-run moment selection" : "Start AI analysis"}</button>` : ""}
         ${["analyzing", "processing"].includes(p.status) ? `<a class="btn btn-primary" href="#/p/${p.id}/processing">View processing</a>` : ""}
         <button class="btn btn-danger" id="del">Delete</button>
       </div></div>
     ${p.error ? `<div class="banner err" style="margin-bottom:16px">⚠ Last job failed: ${esc(p.error)}</div>` : ""}
+    ${p.source_filename && !p.readiness?.can_analyze && !["analyzing", "processing"].includes(p.status) ? `<div class="banner warn" style="margin-bottom:16px">ⓘ ${esc(p.readiness.message)} <a href="#/p/${p.id}/upload" style="text-decoration:underline;margin-left:6px">Upload tab</a></div>` : ""}
     <div class="grid cols-3">
       <div class="card"><div class="card-head"><h2>Source video</h2>${si ? statusPill("done") : ""}</div>${si ? `<dl class="kv"><dt>File</dt><dd>${esc(p.source_filename)}</dd><dt>Resolution</dt><dd>${si.width}×${si.height}</dd><dt>Duration</dt><dd>${fmtClock(si.duration * 1000)}</dd><dt>Frame rate</dt><dd>${si.fps?.toFixed(2)} fps</dd><dt>Audio</dt><dd>${si.has_audio ? "yes" : "none"}</dd><dt>Size</dt><dd>${fmtBytes(si.size_bytes)}</dd></dl>` : `<p class="muted">No video yet.</p><a class="btn btn-sm" href="#/p/${p.id}/upload">Upload</a>`}</div>
       <div class="card"><div class="card-head"><h2>Transcript</h2>${ti ? statusPill("done") : ""}</div>${ti ? `<dl class="kv"><dt>File</dt><dd>${esc(p.transcript_filename)}</dd><dt>Sentences</dt><dd>${ti.sentences}</dd><dt>Words</dt><dd>${ti.words}</dd><dt>Speakers</dt><dd>${ti.speakers.join(", ") || "—"}</dd><dt>Covers</dt><dd>${fmtClock(ti.duration_ms)}</dd></dl>` : `<p class="muted">No transcript yet.</p><a class="btn btn-sm" href="#/p/${p.id}/upload">Add transcript</a>`}</div>
@@ -267,7 +275,7 @@ async function viewProcessing(pid) {
           ${job?.error ? `<div class="banner err" style="margin-top:14px">⚠ ${esc(job.error)}</div>${pr.traceback ? `<details style="margin-top:8px"><summary class="dim small">traceback</summary><pre class="mono small" style="white-space:pre-wrap;color:var(--text-2)">${esc(pr.traceback)}</pre></details>` : ""}` : ""}
           <div class="actions" style="margin-top:16px">
             ${live ? `<button class="btn btn-danger" id="cancel">■ Cancel job</button>` : ""}
-            ${!live && ["ready", "analyzed", "error"].includes(proj.status) ? `<button class="btn btn-primary" id="analyze">✦ ${clips.length ? "Re-run moment selection" : "Start AI analysis"}</button>` : ""}
+            ${!live && ["ready", "analyzed", "error"].includes(proj.status) && proj.readiness?.can_analyze ? `<button class="btn btn-primary" id="analyze">✦ ${clips.length ? "Re-run moment selection" : "Start AI analysis"}</button>` : ""}
             ${!live && clips.some((c) => c.selected) ? `<button class="btn" id="process">▶ Process ${clips.filter((c) => c.selected).length} selected clip(s)</button>` : ""}
             ${clips.length ? `<a class="btn" href="#/p/${pid}/clips">Open clips</a>` : ""}
           </div>
@@ -313,7 +321,7 @@ async function viewClips(pid) {
           <button class="btn btn-primary" id="process" ${live || !sel.length ? "disabled" : ""}>▶ Process &amp; export ${sel.length} selected</button>
         </div></div>
       ${live ? `<div class="banner info" style="margin-bottom:16px"><span class="spin pill accent" style="border:0"></span> A job is running — <a href="#/p/${pid}/processing" style="text-decoration:underline">open the processing view</a>.</div>` : ""}
-      ${clips.length ? `<div class="clip-grid">${clips.map((c) => clipCard(pid, c, compare.has(c.id))).join("")}</div>` : `<div class="empty"><div class="big">✦</div>No moments yet. ${proj.status === "ready" ? `<button class="btn btn-primary" id="analyze0" style="margin-top:10px">Start AI analysis</button>` : `<a href="#/p/${pid}/upload" style="color:var(--accent-2)">Upload a video and transcript first.</a>`}</div>`}`;
+      ${clips.length ? `<div class="clip-grid">${clips.map((c) => clipCard(pid, c, compare.has(c.id))).join("")}</div>` : `<div class="empty"><div class="big">✦</div>No moments yet. ${proj.status === "ready" ? `<button class="btn btn-primary" id="analyze0" style="margin-top:10px">Start AI analysis</button>` : `<a href="#/p/${pid}/upload" style="color:var(--accent-2)">Upload a video first.</a>`}</div>`}`;
     $$("[data-sel]").forEach((cb) => (cb.onchange = async () => { await api.patch(`/api/projects/${pid}/clips/${cb.dataset.sel}`, { selected: cb.checked }); render(); }));
     $$("[data-cmp]").forEach((cb) => (cb.onchange = () => { cb.checked ? compare.add(cb.dataset.cmp) : compare.delete(cb.dataset.cmp); $("#compare").disabled = compare.size < 2; $("#compare").textContent = `⇄ Compare (${compare.size})`; }));
     $$("[data-preview]").forEach((b) => (b.onclick = () => previewModal(pid, clips.find((c) => c.id === b.dataset.preview))));
@@ -479,6 +487,12 @@ async function viewSettings(pid) {
           <div class="field"><label>LLM model</label><input class="input" name="llm_model" value="${esc(s.llm_model)}"></div>
         </div>
         <label class="switch" style="margin-top:12px"><input type="checkbox" name="allow_hosted_llm" ${s.allow_hosted_llm ? "checked" : ""}> <span>Allow a <b>hosted</b> LLM endpoint <span class="dim small">(off by default — non-local endpoints are refused)</span></span></label>
+        <div class="card-head" style="margin-top:18px"><h2>Automatic transcription</h2>${h?.transcription_available ? '<span class="pill ok">installed</span>' : '<span class="pill warn">not installed</span>'}</div>
+        <p class="help">Used only when a project has no uploaded transcript. Runs locally with faster-whisper (MIT); the model downloads once into <code>models/whisper</code>.${h?.transcription_available ? "" : ` Install with <code>${esc(h?.transcription_install || "")}</code> and restart.`}</p>
+        <div class="form-grid" style="margin-top:10px">
+          <div class="field"><label>Whisper model</label><select class="input" name="transcribe_model">${(h?.transcription_models || ["base"]).map((m) => `<option ${s.transcribe_model === m ? "selected" : ""}>${m}</option>`).join("")}</select><span class="help">tiny/base: fast · small: better · medium/large-v3: slow on CPU</span></div>
+          <div class="field"><label>Language (blank = auto-detect)</label><input class="input" name="transcribe_language" value="${esc(s.transcribe_language)}" placeholder="en"></div>
+        </div>
       </div>
       <div class="card"><div class="card-head"><h2>Speaker tracking &amp; output</h2></div>
         <div class="form-grid">

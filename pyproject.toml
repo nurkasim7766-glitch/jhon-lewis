@@ -22,6 +22,8 @@ dev = ["pytest>=8", "httpx>=0.27"]
 # LR-ASD backend (MIT). Install torch from the CPU index if no GPU:
 #   uv pip install torch --index-url https://download.pytorch.org/whl/cpu
 lrasd = ["torch>=2.0", "python_speech_features>=0.6"]
+# Local speech-to-text for videos uploaded without a transcript (MIT; CPU int8).
+transcribe = ["faster-whisper>=1.0"]
 
 [project.scripts]
 facepipe = "facepipe.cli:main"

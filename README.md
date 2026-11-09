@@ -53,6 +53,7 @@ Models (downloaded automatically into `./models/` on first use):
 |---|---|---|---|
 | `face_landmarker.task` | 3.8 MB | MediaPipe face detection + 478 landmarks | Apache-2.0 |
 | `lrasd_pretrain_AVA.model` | 3.4 MB | optional LR-ASD neural active-speaker model | MIT |
+| `whisper/models--Systran--faster-whisper-<size>` | 75 MB (base) – 1.5 GB (large-v3) | automatic transcription when no transcript is uploaded | MIT |
 
 ---
 
@@ -70,7 +71,7 @@ What `start.bat` does, in order:
 | step | what happens | where it can fail |
 |---|---|---|
 | Python detection | tries `py -3`, then `python`; requires ≥ 3.10 | prints install instructions and pauses |
-| First run only | `python -m venv .venv`, `pip install --upgrade pip`, `pip install -e ".[dev]"` (≈ 3–8 min, ~1.2 GB; needs internet) | pauses with the pip error; run again to retry |
+| First run only | `python -m venv .venv`, `pip install --upgrade pip`, `pip install -e ".[dev,transcribe]"` (≈ 3–8 min, ~1.2 GB; needs internet) | pauses with the pip error; run again to retry |
 | Every run | checks `import facepipe.web.app`, re-installs if a dependency is missing | — |
 | Start | `python -m facepipe.web --port 8765`; the server opens `http://127.0.0.1:8765/` in your default browser after ~1 s | “address already in use” → set another port |
 
@@ -157,9 +158,17 @@ projects and a recent-activity feed. **Quick upload** starts a new project.
    (`FACEPIPE_MAX_UPLOAD_MB`). The server probes the file; undecodable or
    < 5 s videos are rejected with a clear message. Progress is shown and the upload
    can be cancelled.
-3. Add the transcript: drop a JSON file or paste JSON. Format: Whisper /
+3. **Optionally** add a transcript: drop a JSON file or paste JSON. Format: Whisper /
    faster-whisper / WhisperX `segments` (see §8, 5.4). Word timings are optional.
-4. **Start AI analysis**.
+   - With no transcript, analysis **transcribes the audio locally** with faster-whisper
+     (installed by `start.bat` / `start.sh`; model from Settings, default `base`,
+     downloaded once into `models/whisper`). The generated transcript is shown on the
+     Upload tab and can be downloaded or replaced.
+   - If local transcription is not installed, or the video has no audio track, the
+     Upload tab says exactly that and **Start AI analysis** stays disabled until a
+     transcript is uploaded.
+4. **Start AI analysis** — enabled as soon as a video is uploaded and a transcript is
+   either present or can be generated.
 
 Replacing the video or transcript clears the clips derived from the old one.
 
@@ -169,18 +178,19 @@ Live view of the real pipeline, polled from the job record:
 | # | step | engine source of the status |
 |---|---|---|
 | 1 | Video ingestion | ffprobe/OpenCV probe of the upload |
-| 2 | Transcript processing | sentence segmentation |
-| 3 | AI moment selection | candidate generation + scoring |
-| 4 | Clip extraction | frame-accurate ffmpeg cut |
-| 5 | Face detection & landmark tracking | MediaPipe, per-frame progress bar |
-| 6 | Active-speaker detection | ASD backend |
-| 7 | Speaker segmentation | hysteresis + min-duration |
-| 8 | Camera crop planning | smoothed crop path |
-| 9 | Clip rendering | per-frame progress bar |
-| 10 | Debug overlay | per-frame progress bar |
-| 11 | Final output | output.mp4 verified on disk |
+| 2 | Automatic transcription | faster-whisper, only when no transcript was uploaded (shown as *reused* otherwise) |
+| 3 | Transcript processing | sentence segmentation |
+| 4 | AI moment selection | candidate generation + scoring |
+| 5 | Clip extraction | frame-accurate ffmpeg cut |
+| 6 | Face detection & landmark tracking | MediaPipe, per-frame progress bar |
+| 7 | Active-speaker detection | ASD backend |
+| 8 | Speaker segmentation | hysteresis + min-duration |
+| 9 | Camera crop planning | smoothed crop path |
+| 10 | Clip rendering | per-frame progress bar |
+| 11 | Debug overlay | per-frame progress bar |
+| 12 | Final output | output.mp4 verified on disk |
 
-Steps 1–3 run once per project; 4–11 run per selected clip. Stages whose outputs
+Steps 1–4 run once per project; 5–12 run per selected clip. Stages whose outputs
 already exist show **reused**. **Cancel job** stops at the next frame/stage boundary.
 Failed jobs show the error and a traceback.
 
@@ -234,6 +244,8 @@ Create, rename (click the title), open, delete. Deleting removes the project's f
 | Output size | 1080 × 1920 | any even size; crop keeps this aspect |
 | Quality (CRF) / encoder speed | 18 / medium | x264 settings; `veryfast` for iteration |
 | Debug overlay | on | also render `debug.mp4` per clip |
+| Whisper model | base | faster-whisper size for automatic transcription: `tiny`, `base`, `small`, `medium`, `large-v3` |
+| Transcription language | auto | ISO code (e.g. `en`) to skip language detection |
 
 ### Environment variables
 
@@ -356,7 +368,9 @@ python scripts/ui_walkthrough.py        # headless Chrome: upload -> analyze -> 
 | “could not be decoded as a video” | the file is corrupt or an unsupported codec; re-export as H.264 MP4 |
 | No faces detected (clip renders centred) | faces are too small; MediaPipe needs ≈ ≥ 100 px face height. Check `phase1/manifest.json → frames_with_faces` |
 | “no sentence-aligned window between 30s and 60s” | the transcript's sentences don't fit; widen min/max clip length in Settings |
-| Analysis says “needs both a video and a transcript” | upload both on the Upload tab |
+| Analysis says a transcript is required | local transcription isn't installed: `.venv\Scripts\pip install -e ".[transcribe]"` (Windows) / `pip install -e ".[transcribe]"`, restart, or upload a transcript JSON |
+| "no audio track, so it cannot be transcribed" | the video is silent; upload a transcript JSON |
+| "no speech was detected in the audio" | Whisper found nothing to transcribe; check the audio or upload a transcript |
 | `HostedEndpointRefused` | the LLM endpoint isn't local; run Ollama/llama.cpp/vLLM locally or enable “Allow hosted LLM” deliberately |
 | LR-ASD option disabled | install the extras: `pip install torch --index-url https://download.pytorch.org/whl/cpu` then `pip install -e ".[lrasd]"` |
 | Job shows **interrupted** | the app was closed mid-job; run Process again — finished stages are reused |
